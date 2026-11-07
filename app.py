@@ -1,26 +1,37 @@
 import os
+import re
+import random
 from datetime import datetime, timezone, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from sqlalchemy import or_, func
+from flask_mail import Mail, Message
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'AttarLalpari2026Key')
 
-# Render PostgreSQL ड्रायव्हर URL फिक्स
+# Render PostgreSQL URL Fix
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///lalpari.db')
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Gmail SMTP Configuration
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+app.config['MAIL_PORT'] = 587
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', 'apalilalpari@gmail.com')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', '')
+app.config['MAIL_DEFAULT_SENDER'] = ('आपली लालपरी', app.config['MAIL_USERNAME'])
+
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
+mail = Mail(app)
 
-# भारतीय प्रमाणवेळ (IST: UTC + 5:30)
+# भारतीय प्रमाणवेळ (IST: UTC + 5:30)[cite: 20]
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # --- मॉडेल्स ---
@@ -40,12 +51,41 @@ class BusSchedule(db.Model):
     bus_type = db.Column(db.String(50), default="साधी (लालपरी)")
     departure_time = db.Column(db.String(10), nullable=False)
     arrival_time = db.Column(db.String(10), nullable=True)
-    via_route = db.Column(db.String(300), default="थेट")
+    via_route = db.Column(db.String(400), default="थेट") # मार्गातील सर्व थांबे इथे येतील
     fare = db.Column(db.Integer, default=200)
 
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
+def clean_text(text):
+    if not text:
+        return ""
+    # कंसातील मजकूर व अतिरिक्त जागा काढून लोअरकेस करणे
+    cleaned = re.sub(r'\(.*?\)', '', str(text)).strip().lower()
+    return cleaned
+
+def stop_matches(user_input, stop_in_db):
+    u = clean_text(user_input)
+    s = clean_text(stop_in_db)
+    return u in s or s in u
+
+def parse_time_minutes(t_str):
+    """वेळेचे मिनिटांमध्ये रूपांतर करणे (24-hr व 12-hr दोन्ही समजते)"""
+    t_str = t_str.strip().upper()
+    try:
+        if 'PM' in t_str or 'AM' in t_str:
+            t = datetime.strptime(t_str, "%I:%M %p")
+            return t.hour * 60 + t.minute
+        parts = t_str.split(':')
+        h = int(parts[0])
+        m = int(parts[1])
+        # जर कोणी चुकून 5:45 टाकले असेल आणि ती साधी बस दुपारची असेल तर 17:45 मानणे
+        if h in [1, 2, 3, 4, 5, 6, 7] and h != 0:
+            h += 12
+        return h * 60 + m
+    except Exception:
+        return 0
 
 # --- राऊट्स ---
 @app.route('/')
@@ -57,7 +97,6 @@ def index():
     now_ist = datetime.now(IST)
     today_date = now_ist.date()
     
-    # कॅलेंडर तारीख लॉजिक
     if req_date:
         try:
             chosen_date = datetime.strptime(req_date, "%Y-%m-%d").date()
@@ -72,112 +111,162 @@ def index():
 
     routes = []
     if src and dst:
-        # कॅपिटल आणि स्मॉल दोन्ही अक्षरांसाठी केस-इन्सेंसिटिव्ह सर्च
-        src_pattern = f"%{src.lower()}%"
-        dst_pattern = f"%{dst.lower()}%"
-        
-        query = BusSchedule.query.filter(
-            or_(
-                func.lower(BusSchedule.source).like(src_pattern),
-                func.lower(BusSchedule.source_en).like(src_pattern)
-            ),
-            or_(
-                func.lower(BusSchedule.destination).like(dst_pattern),
-                func.lower(BusSchedule.destination_en).like(dst_pattern)
-            )
-        ).all()
-        
+        all_buses = BusSchedule.query.all()
         current_minutes = now_ist.hour * 60 + now_ist.minute
         
-        for b in query:
-            try:
-                dep_hour, dep_min = map(int, b.departure_time.split(':'))
-                bus_minutes = dep_hour * 60 + dep_min
-            except Exception:
-                bus_minutes = 0
+        for b in all_buses:
+            # पूर्ण मार्गातील थांब्यांचा क्रम तयार करणे
+            stops = [b.source]
+            if b.source_en:
+                stops.append(b.source_en)
+                
+            if b.via_route:
+                via_stops = [v.strip() for v in re.split(r'[,➔\->|/]', b.via_route) if v.strip()]
+                stops.extend(via_stops)
+                
+            stops.append(b.destination)
+            if b.destination_en:
+                stops.append(b.destination_en)
 
-            if chosen_date == today_date:
-                diff = bus_minutes - current_minutes
-                if diff >= 0:
-                    status_type = "today"
+            # चढण्याचे व उतरण्याचे ठिकाण शोधणे
+            src_idx = -1
+            dst_idx = -1
+
+            for idx, stop in enumerate(stops):
+                if src_idx == -1 and stop_matches(src, stop):
+                    src_idx = idx
+                if dst_idx == -1 and stop_matches(dst, stop):
+                    dst_idx = idx
+
+            # जर दोन्ही थांबे सापडले आणि योग्य दिशेत असतील (From आधी, To नंतर)
+            if src_idx != -1 and dst_idx != -1 and src_idx < dst_idx:
+                bus_minutes = parse_time_minutes(b.departure_time)
+
+                if chosen_date == today_date:
+                    diff = bus_minutes - current_minutes
+                    # सर्च वेळेनंतरची गाडी आहे का?
+                    if diff >= 0:
+                        status_type = "today"
+                        is_upcoming = True
+                        trip_date_label = f"आज ({chosen_date.strftime('%d %b')})"
+                    else:
+                        status_type = "passed_today"
+                        is_upcoming = False
+                        tomorrow = today_date + timedelta(days=1)
+                        trip_date_label = f"उद्या ({tomorrow.strftime('%d %b')})"
+                elif chosen_date > today_date:
+                    diff = 9999
+                    status_type = "future"
                     is_upcoming = True
-                    trip_date_label = f"आज ({chosen_date.strftime('%d %b')})"
+                    trip_date_label = chosen_date.strftime('%d %b %Y')
                 else:
-                    status_type = "passed_today"
+                    diff = -9999
+                    status_type = "past"
                     is_upcoming = False
-                    tomorrow = today_date + timedelta(days=1)
-                    trip_date_label = f"उद्या ({tomorrow.strftime('%d %b')})"
-            elif chosen_date > today_date:
-                diff = 9999
-                status_type = "future"
-                is_upcoming = True
-                trip_date_label = chosen_date.strftime('%d %b %Y')
-            else:
-                diff = -9999
-                status_type = "past"
-                is_upcoming = False
-                trip_date_label = chosen_date.strftime('%d %b %Y')
+                    trip_date_label = chosen_date.strftime('%d %b %Y')
 
-            routes.append({
-                'bus': b,
-                'diff': diff,
-                'is_upcoming': is_upcoming,
-                'status_type': status_type,
-                'trip_date_label': trip_date_label
-            })
+                routes.append({
+                    'bus': b,
+                    'diff': diff,
+                    'is_upcoming': is_upcoming,
+                    'status_type': status_type,
+                    'trip_date_label': trip_date_label
+                })
         
-        routes.sort(key=lambda x: (not x['is_upcoming'], x['bus'].departure_time))
+        # आगामी गाड्या सर्वात वर आणि वेळेनुसार क्रमाने (Ascending)
+        routes.sort(key=lambda x: (not x['is_upcoming'], parse_time_minutes(x['bus'].departure_time)))
 
-    sources = set()
-    destinations = set()
+    # ड्रॉपडाउन सुचवण्यासाठी थांब्यांची यादी
+    available_stops = set()
     for row in BusSchedule.query.all():
-        if row.source: sources.add(row.source)
-        if row.source_en: sources.add(row.source_en)
-        if row.destination: destinations.add(row.destination)
-        if row.destination_en: destinations.add(row.destination_en)
+        if row.source: available_stops.add(row.source)
+        if row.source_en: available_stops.add(row.source_en)
+        if row.destination: available_stops.add(row.destination)
+        if row.destination_en: available_stops.add(row.destination_en)
+        if row.via_route:
+            for s in re.split(r'[,➔\->|/]', row.via_route):
+                clean_s = s.strip()
+                if clean_s and "मार्गे" not in clean_s:
+                    available_stops.add(clean_s)
         
     current_time_str = now_ist.strftime("%I:%M %p")
     return render_template('index.html', routes=routes, 
-                           sources=sorted(list(sources)), 
-                           destinations=sorted(list(destinations)), 
+                           sources=sorted(list(available_stops)), 
+                           destinations=sorted(list(available_stops)), 
                            src=src, dst=dst, 
                            current_time=current_time_str,
                            today_str=today_str,
                            selected_date_str=selected_date_str,
                            travel_date_display=travel_date_display)
 
+# नागरिक लॉगिन (ईमेल OTP)
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        identifier = request.form.get('identifier').strip()
-        password = request.form.get('password')
-        user = User.query.filter_by(identifier=identifier).first()
+        email = request.form.get('identifier', '').strip().lower()
+        if not email or '@' not in email:
+            flash('कृपया वैध ईमेल आयडी प्रविष्ट करा!', 'warning')
+            return redirect(url_for('login'))
         
-        if user and check_password_hash(user.password, password):
-            login_user(user)
-            flash('यशस्वीरीत्या लॉगिन झाले!', 'success')
-            return redirect(url_for('index'))
-        flash('मोबाईल/ईमेल किंवा पासवर्ड चुकीचा आहे!', 'danger')
+        otp = str(random.randint(100000, 999999))
+        session['otp'] = otp
+        session['user_email'] = email
+
+        try:
+            msg = Message(
+                subject="आपली लालपरी - लॉगिन OTP",
+                recipients=[email]
+            )
+            msg.html = f"""
+            <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; border-radius: 10px; max-width: 450px;">
+                <h2 style="color: #dc3545; text-align: center;">🚌 आपली लालपरी</h2>
+                <p>नमस्कार,</p>
+                <p>लॉगिन करण्यासाठी तुमचा OTP खालीलप्रमाणे आहे:</p>
+                <div style="text-align: center; margin: 25px 0;">
+                    <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #198754; background: #e8f5e9; padding: 10px 20px; border-radius: 8px;">{otp}</span>
+                </div>
+                <p style="color: #666; font-size: 13px;">हा कोड १० मिनिटांसाठी वैध आहे.</p>
+            </div>
+            """
+            mail.send(msg)
+            flash(f'{email} या ईमेलवर OTP पाठवला आहे!', 'info')
+            return redirect(url_for('verify_otp'))
+        except Exception:
+            flash('ईमेल पाठवताना अडचण आली. पुन्हा प्रयत्न करा.', 'danger')
+            return redirect(url_for('login'))
+
     return render_template('login.html')
 
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        identifier = request.form.get('identifier').strip()
-        full_name = request.form.get('full_name').strip()
-        password = request.form.get('password')
-        
-        if User.query.filter_by(identifier=identifier).first():
-            flash('हा मोबाईल क्रमांक किंवा ईमेल आधीच नोंदणीकृत आहे!', 'warning')
-            return redirect(url_for('register'))
-            
-        hashed_pwd = generate_password_hash(password, method='scrypt')
-        new_user = User(identifier=identifier, full_name=full_name, password=hashed_pwd)
-        db.session.add(new_user)
-        db.session.commit()
-        flash('नोंदणी यशस्वी झाली! आता लॉगिन करा.', 'success')
+@app.route('/verify-otp', methods=['GET', 'POST'])
+def verify_otp():
+    email = session.get('user_email')
+    if not email:
         return redirect(url_for('login'))
-    return render_template('register.html')
+
+    if request.method == 'POST':
+        entered_otp = request.form.get('otp', '').strip()
+        actual_otp = session.get('otp')
+
+        if actual_otp and entered_otp == actual_otp:
+            user = User.query.filter_by(identifier=email).first()
+            if not user:
+                username_part = email.split('@')[0].capitalize()
+                user = User(
+                    identifier=email,
+                    full_name=username_part,
+                    password=generate_password_hash("OTP_VERIFIED", method='scrypt')
+                )
+                db.session.add(user)
+                db.session.commit()
+
+            login_user(user)
+            session.pop('otp', None)
+            flash(f'स्वागत आहे, {user.full_name}! लॉगिन झाले.', 'success')
+            return redirect(url_for('index'))
+        else:
+            flash('चुकीचा OTP टाकला आहे!', 'danger')
+
+    return render_template('verify_otp.html', email=email)
 
 @app.route('/admin-login', methods=['GET', 'POST'])
 def admin_login():
@@ -189,14 +278,14 @@ def admin_login():
         if user and check_password_hash(user.password, password):
             login_user(user)
             return redirect(url_for('admin_dashboard'))
-        flash('ॲडमिन युझरनेम किंवा पासवर्ड चुकीचा आहे!', 'danger')
+        flash('ॲडमिन आयडी किंवा पासवर्ड चुकीचा आहे!', 'danger')
     return render_template('admin_login.html')
 
 @app.route('/admin', methods=['GET', 'POST'])
 @login_required
 def admin_dashboard():
     if not current_user.is_admin:
-        flash('तुम्हाला या पानावर जाण्याची परवानगी नाही!', 'danger')
+        flash('परवानगी नाही!', 'danger')
         return redirect(url_for('index'))
         
     if request.method == 'POST':
@@ -213,7 +302,7 @@ def admin_dashboard():
         )
         db.session.add(new_bus)
         db.session.commit()
-        flash('नवीन गाडीचे वेळापत्रक यशस्वीपणे जोडले!', 'success')
+        flash('नवीन गाडी वेळापत्रकात जोडली!', 'success')
         return redirect(url_for('admin_dashboard'))
 
     all_buses = BusSchedule.query.order_by(BusSchedule.departure_time.asc()).all()
@@ -235,7 +324,7 @@ def edit_bus(bus_id):
     bus.via_route = request.form.get('via_route', '').strip()
     bus.fare = int(request.form.get('fare', 0))
     db.session.commit()
-    flash('बसचे वेळापत्रक यशस्वीपणे अपडेट केले!', 'success')
+    flash('गाडीचे तपशील अपडेट केले!', 'success')
     return redirect(url_for('admin_dashboard'))
 
 @app.route('/admin/delete/<int:bus_id>')
@@ -246,21 +335,18 @@ def delete_bus(bus_id):
     bus = BusSchedule.query.get_or_404(bus_id)
     db.session.delete(bus)
     db.session.commit()
-    flash('गाडीचे रेकॉर्ड हटवले!', 'info')
+    flash('गाडी हटवली!', 'info')
     return redirect(url_for('admin_dashboard'))
 
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
-    flash('लॉगआउट यशस्वी झाले.', 'info')
+    flash('लॉगआउट झाले.', 'info')
     return redirect(url_for('index'))
 
-# --- डेटाबेस इनिशिएलायझेशन ---
 with app.app_context():
     db.create_all()
-    
-    # ॲडमिन क्रेडेंशियल्स
     admin = User.query.filter_by(identifier="apalilalpari").first()
     if not admin:
         admin = User(
@@ -271,104 +357,6 @@ with app.app_context():
         )
         db.session.add(admin)
         db.session.commit()
-
-    VIA_PUNE = "मोहोळ, टेंभुर्णी, इंदापूर, भिगवण, उरुळी कांचन, हडपसर, स्वारगेट"
-    VIA_RATNAGIRI = "मोहोळ, पंढरपूर, सांगोला, शिर्ढोण, मिरज, सांगली, कोल्हापूर मार्गे रत्नागिरी"
-
-    # १. सोलापूर ➔ रत्नागिरी वेळापत्रक
-    ratnagiri_schedules = [
-        ("07:20", "17:35", "साधी (लालपरी)", 750, VIA_RATNAGIRI),
-        ("08:40", "19:00", "साधी (लालपरी)", 760, VIA_RATNAGIRI),
-        ("12:55", "23:30", "साधी (लालपरी)", 840, VIA_RATNAGIRI),
-        ("19:30", "06:00", "साधी (लालपरी)", 840, VIA_RATNAGIRI),
-        ("20:00", "06:30", "साधी (लालपरी)", 760, VIA_RATNAGIRI)
-    ]
-
-    for dep, arr, b_type, fare, via in ratnagiri_schedules:
-        exists = BusSchedule.query.filter_by(source="सोलापूर", destination="रत्नागिरी", departure_time=dep).first()
-        if not exists:
-            db.session.add(BusSchedule(
-                source="सोलापूर", source_en="Solapur",
-                destination="रत्नागिरी", destination_en="Ratnagiri",
-                bus_type=b_type, departure_time=dep, arrival_time=arr,
-                via_route=via, fare=fare
-            ))
-        else:
-            exists.via_route = VIA_RATNAGIRI
-            exists.fare = fare
-            exists.arrival_time = arr
-
-    # २. सोलापूर ➔ पुणे (स्वारगेट) वेळापत्रक
-    pune_master_schedules = [
-        ("00:15", "05:29", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("05:00", "10:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
-        ("05:47", "11:30", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("06:00", "11:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
-        ("06:25", "12:56", "साधी (लालपरी)", 475, VIA_PUNE),
-        ("06:56", "13:32", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("07:00", "12:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
-        ("07:00", "13:47", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("07:15", "12:29", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("08:00", "13:00", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("08:00", "13:30", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("08:15", "14:15", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("08:15", "13:30", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("08:33", "14:44", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("08:43", "14:15", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("08:43", "16:20", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("09:00", "14:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
-        ("09:04", "15:39", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("09:05", "15:02", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("09:32", "16:02", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("09:40", "15:55", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("09:47", "16:07", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("09:56", "15:01", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("10:00", "15:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
-        ("10:00", "15:49", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("10:04", "16:16", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("14:45", "20:05", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("14:45", "20:15", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("14:53", "21:33", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("15:00", "20:29", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("15:15", "20:29", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("15:15", "20:41", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("15:45", "21:15", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("16:00", "21:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
-        ("16:02", "21:35", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("16:15", "21:45", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("16:37", "21:56", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("16:42", "22:49", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("16:45", "22:15", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("17:00", "22:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
-        ("17:15", "22:29", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("17:30", "23:00", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("17:52", "23:58", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("18:15", "23:45", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("20:00", "01:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
-        ("20:34", "02:34", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("21:00", "02:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
-        ("21:10", "03:14", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("22:00", "03:29", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("22:19", "04:31", "साधी (लालपरी)", 485, VIA_PUNE),
-        ("22:34", "05:09", "निमआराम (एशियाड)", 580, VIA_PUNE),
-        ("23:00", "03:59", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE)
-    ]
-
-    for dep, arr, b_type, fare, via in pune_master_schedules:
-        exists = BusSchedule.query.filter_by(source="सोलापूर", destination="पुणे (स्वारगेट)", departure_time=dep, bus_type=b_type).first()
-        if not exists:
-            db.session.add(BusSchedule(
-                source="सोलापूर", source_en="Solapur",
-                destination="पुणे (स्वारगेट)", destination_en="Pune",
-                bus_type=b_type, departure_time=dep, arrival_time=arr,
-                via_route=via, fare=fare
-            ))
-        else:
-            exists.via_route = VIA_PUNE
-            exists.fare = fare
-            exists.arrival_time = arr
-
-    db.session.commit()
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
