@@ -11,13 +11,13 @@ from flask_mail import Mail, Message
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'AttarLalpari2026Key')
 
-# Render PostgreSQL ड्रायव्हर फिक्स (psycopg2 सह)
+# Render PostgreSQL ड्रायव्हर फिक्स (Python 3.14 आणि स्टेबल व्हर्जन सुसंगतता)
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///lalpari.db')
 if db_url:
     if db_url.startswith("postgres://"):
-        db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
-    elif db_url.startswith("postgresql://") and "+psycopg2" not in db_url:
-        db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        db_url = db_url.replace("postgres://", "postgresql+pg8000://", 1)
+    elif db_url.startswith("postgresql://") and "+pg8000" not in db_url and "+psycopg2" not in db_url:
+        db_url = db_url.replace("postgresql://", "postgresql+pg8000://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -73,7 +73,7 @@ def stop_matches(user_input, stop_in_db):
     return u in s or s in u
 
 def parse_time_minutes(t_str):
-    """वेळेचे मिनिटांमध्ये रूपांतर करणे (24-hr आणि 12-hr दोन्ही समजते)"""
+    """वेळेचे मिनिटांमध्ये रूपांतर करणे (24-hr आणि 12-hr दोन्ही सुसंगत)"""
     t_str = t_str.strip().upper()
     try:
         if 'PM' in t_str or 'AM' in t_str:
@@ -170,7 +170,7 @@ def index():
                     'trip_date_label': trip_date_label
                 })
         
-        # चालू वेळेनंतरच्या आगामी गाड्या वर आणि क्रमाने
+        # शोधलेल्या वेळेनंतरच्या आगामी बसेस आधी दाखवणे
         routes.sort(key=lambda x: (not x['is_upcoming'], parse_time_minutes(x['bus'].departure_time)))
 
     available_stops = set()
@@ -283,7 +283,7 @@ def admin_login():
 @login_required
 def admin_dashboard():
     if not current_user.is_admin:
-        flash('तुम्हाला परवानगी नाही!', 'danger')
+        flash('परवानगी नाही!', 'danger')
         return redirect(url_for('index'))
         
     if request.method == 'POST':
