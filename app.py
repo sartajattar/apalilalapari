@@ -4,12 +4,12 @@ from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'AttarLalpari2026Key')
 
-# Render PostgreSQL ड्रायव्हर फिक्स
+# Render PostgreSQL ड्रायव्हर URL फिक्स
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///lalpari.db')
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -20,7 +20,7 @@ db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# भारतीय प्रमाणवेळ (Indian Standard Time: UTC + 5:30)
+# भारतीय प्रमाणवेळ (IST: UTC + 5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # --- मॉडेल्स ---
@@ -57,7 +57,7 @@ def index():
     now_ist = datetime.now(IST)
     today_date = now_ist.date()
     
-    # युझरने कॅलेंडरमधून निवडलेली तारीख (किंवा आजची तारीख)
+    # कॅलेंडर तारीख लॉजिक
     if req_date:
         try:
             chosen_date = datetime.strptime(req_date, "%Y-%m-%d").date()
@@ -72,14 +72,18 @@ def index():
 
     routes = []
     if src and dst:
+        # कॅपिटल आणि स्मॉल दोन्ही अक्षरांसाठी केस-इन्सेंसिटिव्ह सर्च
+        src_pattern = f"%{src.lower()}%"
+        dst_pattern = f"%{dst.lower()}%"
+        
         query = BusSchedule.query.filter(
             or_(
-                BusSchedule.source.ilike(f"%{src}%"),
-                BusSchedule.source_en.ilike(f"%{src}%")
+                func.lower(BusSchedule.source).like(src_pattern),
+                func.lower(BusSchedule.source_en).like(src_pattern)
             ),
             or_(
-                BusSchedule.destination.ilike(f"%{dst}%"),
-                BusSchedule.destination_en.ilike(f"%{dst}%")
+                func.lower(BusSchedule.destination).like(dst_pattern),
+                func.lower(BusSchedule.destination_en).like(dst_pattern)
             )
         ).all()
         
@@ -92,7 +96,6 @@ def index():
             except Exception:
                 bus_minutes = 0
 
-            # तारीख आजची असेल तर गाडी निघून गेली की बाकी आहे ते पाहणे
             if chosen_date == today_date:
                 diff = bus_minutes - current_minutes
                 if diff >= 0:
@@ -123,7 +126,6 @@ def index():
                 'trip_date_label': trip_date_label
             })
         
-        # आगामी गाड्या आधी आणि निघून गेलेल्या खाली
         routes.sort(key=lambda x: (not x['is_upcoming'], x['bus'].departure_time))
 
     sources = set()
@@ -258,7 +260,7 @@ def logout():
 with app.app_context():
     db.create_all()
     
-    # ॲडमिन
+    # ॲडमिन क्रेडेंशियल्स
     admin = User.query.filter_by(identifier="apalilalpari").first()
     if not admin:
         admin = User(
