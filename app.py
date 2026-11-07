@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -9,7 +9,7 @@ from sqlalchemy import or_
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'AttarLalpari2026Key')
 
-# Render PostgreSQL URL फिक्स (postgres:// ऐवजी postgresql://)
+# Render PostgreSQL फिक्स
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///lalpari.db')
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -19,6 +19,9 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
+
+# भारतीय प्रमाणवेळ (IST: UTC + 5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # --- मॉडेल्स ---
 class User(UserMixin, db.Model):
@@ -37,7 +40,7 @@ class BusSchedule(db.Model):
     bus_type = db.Column(db.String(50), default="साधी (लालपरी)")
     departure_time = db.Column(db.String(10), nullable=False)
     arrival_time = db.Column(db.String(10), nullable=True)
-    via_route = db.Column(db.String(200), default="थेट")
+    via_route = db.Column(db.String(300), default="थेट")
     fare = db.Column(db.Integer, default=200)
 
 @login_manager.user_loader
@@ -45,7 +48,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 def calculate_next_bus_meta(dep_time_str):
-    now = datetime.now()
+    now = datetime.now(IST)
     try:
         dep_hour, dep_min = map(int, dep_time_str.split(':'))
         bus_minutes = dep_hour * 60 + dep_min
@@ -92,7 +95,7 @@ def index():
         if row.destination: destinations.add(row.destination)
         if row.destination_en: destinations.add(row.destination_en)
         
-    current_time_str = datetime.now().strftime("%I:%M %p")
+    current_time_str = datetime.now(IST).strftime("%I:%M %p")
     return render_template('index.html', routes=routes, 
                            sources=sorted(list(sources)), 
                            destinations=sorted(list(destinations)), 
@@ -171,6 +174,25 @@ def admin_dashboard():
     all_buses = BusSchedule.query.order_by(BusSchedule.departure_time.asc()).all()
     return render_template('admin_dashboard.html', buses=all_buses)
 
+@app.route('/admin/edit/<int:bus_id>', methods=['POST'])
+@login_required
+def edit_bus(bus_id):
+    if not current_user.is_admin:
+        return redirect(url_for('index'))
+    bus = BusSchedule.query.get_or_404(bus_id)
+    bus.source = request.form.get('source').strip()
+    bus.source_en = request.form.get('source_en', '').strip()
+    bus.destination = request.form.get('destination').strip()
+    bus.destination_en = request.form.get('destination_en', '').strip()
+    bus.bus_type = request.form.get('bus_type')
+    bus.departure_time = request.form.get('departure_time').strip()
+    bus.arrival_time = request.form.get('arrival_time', '').strip()
+    bus.via_route = request.form.get('via_route', '').strip()
+    bus.fare = int(request.form.get('fare', 0))
+    db.session.commit()
+    flash('बसचे वेळापत्रक यशस्वीपणे अपडेट केले!', 'success')
+    return redirect(url_for('admin_dashboard'))
+
 @app.route('/admin/delete/<int:bus_id>')
 @login_required
 def delete_bus(bus_id):
@@ -193,7 +215,7 @@ def logout():
 with app.app_context():
     db.create_all()
     
-    # ॲडमिन क्रेडेंशियल्स: apalilalpari / Attar@123
+    # ॲडमिन क्रेडेंशियल्स
     admin = User.query.filter_by(identifier="apalilalpari").first()
     if not admin:
         admin = User(
@@ -204,59 +226,105 @@ with app.app_context():
         )
         db.session.add(admin)
         db.session.commit()
-    else:
-        admin.password = generate_password_hash("Attar@123", method='scrypt')
-        db.session.commit()
 
-    # चिठ्ठीतील अचूक गाड्या (डेटाबेस रिकामी असल्यास)
-    if BusSchedule.query.count() == 0:
-        solapur_kolhapur_times = [
-            ("04:45", "10:20"),
-            ("10:00", "15:58"),
-            ("11:00", "16:58"),
-            ("12:30", "18:28"),
-            ("13:30", "19:28"),
-            ("16:00", "21:58"),
-            ("22:00", "04:14")
-        ]
-        
-        for dep, arr in solapur_kolhapur_times:
-            # सोलापूर ➔ कोल्हापूर (फक्त याचे तिकीट ₹५००)
-            b1 = BusSchedule(
-                source="सोलापूर",
-                source_en="Solapur",
-                destination="कोल्हापूर",
-                destination_en="Kolhapur",
-                bus_type="साधी (लालपरी)",
-                departure_time=dep,
-                arrival_time=arr,
-                via_route="मोहोळ, पंढरपूर, सांगोला, मिरज, सांगली",
-                fare=500
-            )
-            # मोहोळ ➔ कोल्हापूर (डिफॉल्ट ₹२००, ॲडमिनमधून हवे ते बदलू शकता)
-            b2 = BusSchedule(
-                source="मोहोळ",
-                source_en="Mohol",
-                destination="कोल्हापूर",
-                destination_en="Kolhapur",
-                bus_type="साधी (लालपरी)",
-                departure_time=dep,
-                arrival_time=arr,
-                via_route="पंढरपूर, सांगोला, मिरज, सांगली",
-                fare=200
-            )
-            db.session.add(b1)
-            db.session.add(b2)
-        db.session.commit()
-    else:
-        # आधीपासून असलेल्या डेटाबेसमध्ये फक्त सोलापूर ते कोल्हापूर ₹५०० ठेवणे
-        solapur_kolhapur_routes = BusSchedule.query.filter(
-            or_(BusSchedule.source.ilike("%सोलापूर%"), BusSchedule.source_en.ilike("%Solapur%")),
-            or_(BusSchedule.destination.ilike("%कोल्हापूर%"), BusSchedule.destination_en.ilike("%Kolhapur%"))
-        ).all()
-        for b in solapur_kolhapur_routes:
-            b.fare = 500
-        db.session.commit()
+    VIA_PUNE = "मोहोळ, टेंभुर्णी, इंदापूर, भिगवण, उरुळी कांचन, हडपसर, स्वारगेट"
+    VIA_RATNAGIRI = "मोहोळ, पंढरपूर, सांगोला, शिर्ढोण, मिरज, सांगली, कोल्हापूर मार्गे रत्नागिरी"
+
+    # १. सोलापूर ➔ रत्नागिरी बसेस (नवे स्क्रीनशॉट्स)
+    ratnagiri_schedules = [
+        # (वेळ, पोहोच, प्रकार, तिकीट, रूट माहिती)
+        ("07:20", "17:35", "साधी (लालपरी)", 750, VIA_RATNAGIRI),
+        ("08:40", "19:00", "साधी (लालपरी)", 760, VIA_RATNAGIRI),
+        ("12:55", "23:30", "साधी (लालपरी)", 840, VIA_RATNAGIRI),
+        ("19:30", "06:00", "साधी (लालपरी)", 840, VIA_RATNAGIRI),
+        ("20:00", "06:30", "साधी (लालपरी)", 760, VIA_RATNAGIRI)
+    ]
+
+    for dep, arr, b_type, fare, via in ratnagiri_schedules:
+        exists = BusSchedule.query.filter_by(source="सोलापूर", destination="रत्नागिरी", departure_time=dep).first()
+        if not exists:
+            db.session.add(BusSchedule(
+                source="सोलापूर", source_en="Solapur",
+                destination="रत्नागिरी", destination_en="Ratnagiri",
+                bus_type=b_type, departure_time=dep, arrival_time=arr,
+                via_route=via, fare=fare
+            ))
+        else:
+            exists.via_route = VIA_RATNAGIRI
+            exists.fare = fare
+            exists.arrival_time = arr
+
+    # २. सोलापूर ➔ पुणे (स्वारगेट) वेळापत्रक
+    pune_master_schedules = [
+        ("00:15", "05:29", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("05:00", "10:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
+        ("05:47", "11:30", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("06:00", "11:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
+        ("06:25", "12:56", "साधी (लालपरी)", 475, VIA_PUNE),
+        ("06:56", "13:32", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("07:00", "12:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
+        ("07:00", "13:47", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("07:15", "12:29", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("08:00", "13:00", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("08:00", "13:30", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("08:15", "14:15", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("08:15", "13:30", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("08:33", "14:44", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("08:43", "14:15", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("08:43", "16:20", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("09:00", "14:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
+        ("09:04", "15:39", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("09:05", "15:02", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("09:32", "16:02", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("09:40", "15:55", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("09:47", "16:07", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("09:56", "15:01", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("10:00", "15:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
+        ("10:00", "15:49", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("10:04", "16:16", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("14:45", "20:05", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("14:45", "20:15", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("14:53", "21:33", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("15:00", "20:29", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("15:15", "20:29", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("15:15", "20:41", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("15:45", "21:15", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("16:00", "21:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
+        ("16:02", "21:35", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("16:15", "21:45", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("16:37", "21:56", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("16:42", "22:49", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("16:45", "22:15", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("17:00", "22:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
+        ("17:15", "22:29", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("17:30", "23:00", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("17:52", "23:58", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("18:15", "23:45", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("20:00", "01:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
+        ("20:34", "02:34", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("21:00", "02:00", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE),
+        ("21:10", "03:14", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("22:00", "03:29", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("22:19", "04:31", "साधी (लालपरी)", 485, VIA_PUNE),
+        ("22:34", "05:09", "निमआराम (एशियाड)", 580, VIA_PUNE),
+        ("23:00", "03:59", "इ-शिवाई (Electric Shivai)", 680, VIA_PUNE)
+    ]
+
+    for dep, arr, b_type, fare, via in pune_master_schedules:
+        exists = BusSchedule.query.filter_by(source="सोलापूर", destination="पुणे (स्वारगेट)", departure_time=dep, bus_type=b_type).first()
+        if not exists:
+            db.session.add(BusSchedule(
+                source="सोलापूर", source_en="Solapur",
+                destination="पुणे (स्वारगेट)", destination_en="Pune",
+                bus_type=b_type, departure_time=dep, arrival_time=arr,
+                via_route=via, fare=fare
+            ))
+        else:
+            exists.via_route = VIA_PUNE
+            exists.fare = fare
+            exists.arrival_time = arr
+
+    db.session.commit()
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
