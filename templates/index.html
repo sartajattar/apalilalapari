@@ -9,14 +9,14 @@
             <form method="GET" action="{{ url_for('index') }}" class="row g-2">
                 <div class="col-md-4">
                     <label class="form-label fw-bold small">कुठून (From)</label>
-                    <input type="text" name="from" value="{{ src }}" list="src-list" class="form-control" placeholder="उदा. Mohol / मोहोळ" required>
+                    <input type="text" name="from" value="{{ src }}" list="src-list" class="form-control" placeholder="उदा. Indapur / इंदापूर" required>
                     <datalist id="src-list">
                         {% for s in sources %}<option value="{{ s }}">{% endfor %}
                     </datalist>
                 </div>
                 <div class="col-md-4">
                     <label class="form-label fw-bold small">कुठे (To)</label>
-                    <input type="text" name="to" value="{{ dst }}" list="dst-list" class="form-control" placeholder="उदा. Kolhapur / Pune" required>
+                    <input type="text" name="to" value="{{ dst }}" list="dst-list" class="form-control" placeholder="उदा. Swargate / पुणे" required>
                     <datalist id="dst-list">
                         {% for d in destinations %}<option value="{{ d }}">{% endfor %}
                     </datalist>
@@ -48,11 +48,13 @@
                                 <span class="badge bg-danger mb-1">{{ item.bus.bus_type }}</span>
                                 <span class="badge bg-light text-dark border ms-1">📅 {{ item.trip_date_label }}</span>
                                 
-                                <h3 class="fw-bold text-dark mb-0 mt-1">{{ item.bus.departure_time }}</h3>
+                                <h2 class="fw-bold text-dark mb-0 mt-1">{{ item.bus.departure_time }}</h2>
+                                
                                 <div class="text-primary small fw-bold mt-1">
-                                    🚌 मूळ गाडी: {{ item.bus.source }} ➔ {{ item.bus.destination }}
+                                    🚌 मूळ गाडी: <strong>{{ item.bus.source }} ➔ {{ item.bus.destination }}</strong>
                                 </div>
                             </div>
+
                             <div class="text-end">
                                 {% if item.status_type == 'today' %}
                                     <span class="badge bg-success-subtle text-success fs-6 px-3 py-2 rounded-pill">
@@ -73,6 +75,16 @@
                                 <div class="mt-2 text-danger fw-bold fs-5">अंदाजे ₹{{ item.bus.fare }}</div>
                             </div>
                         </div>
+
+                        <!-- मधून शोधणाऱ्यांसाठी महत्त्वाची सूचना -->
+                        {% if item.is_intermediate %}
+                        <div class="alert alert-warning py-1 px-2 my-2 small border-0 d-flex align-items-center rounded-2" style="background-color: #fff3cd; color: #664d03;">
+                            <i class="bi bi-info-circle-fill me-2 fs-6"></i>
+                            <div>
+                                <strong>महत्त्वाची नोंद:</strong> वरील <strong>{{ item.bus.departure_time }}</strong> ही वेळ मूळ स्थानक <strong>[{{ item.bus.source }}]</strong> येथून सुटण्याची आहे. तुमच्या थांब्यावर (<strong>{{ item.user_from }}</strong>) गाडी या वेळेनंतर पुढे येईल.
+                            </div>
+                        </div>
+                        {% endif %}
 
                         <hr class="my-2">
                         <div class="small text-muted d-flex justify-content-between align-items-center">

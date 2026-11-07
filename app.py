@@ -51,7 +51,7 @@ class BusSchedule(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# मराठी आणि इंग्रजी नावांचे समानार्थी शब्दकोश (Synonyms Mapping)
+# मराठी आणि इंग्रजी नावांचे समानार्थी मॅपिंग
 STOP_MAP = {
     "solapur": "सोलापूर", "सोलापूर": "solapur",
     "pune": "पुणे", "पुणे": "pune", "swargate": "स्वारगेट", "स्वारगेट": "swargate",
@@ -68,12 +68,7 @@ STOP_MAP = {
     "miraj": "मिरज", "मिरज": "miraj",
     "sangli": "सांगली", "सांगली": "sangli",
     "kolhapur": "कोल्हापूर", "कोल्हापूर": "kolhapur",
-    "ratnagiri": "रत्नागिरी", "रत्नागिरी": "ratnagiri",
-    "akkalkot": "अक्कलकोट", "अक्कलकोट": "akkalkot",
-    "malwandi": "मळवंडी", "मळवंडी": "malwandi",
-    "manegaon": "मानेगाव", "मानेगाव": "manegaon",
-    "narkhed": "नरखेड", "नरखेड": "narkhed",
-    "korfale": "कोरफळे", "कोरफळे": "korfale"
+    "ratnagiri": "रत्नागिरी", "रत्नागिरी": "ratnagiri"
 }
 
 def clean_text(text):
@@ -84,20 +79,14 @@ def clean_text(text):
 def stop_matches(user_input, stop_in_db):
     u = clean_text(user_input)
     s = clean_text(stop_in_db)
-    
-    # थेट मॅच
     if u in s or s in u:
         return True
-    
-    # मराठी <-> इंग्रजी शब्दकोशातून शोधणे
     mapped_u = STOP_MAP.get(u, "")
     if mapped_u and (mapped_u in s or s in mapped_u):
         return True
-        
     mapped_s = STOP_MAP.get(s, "")
     if mapped_s and (u in mapped_s or mapped_s in u):
         return True
-        
     return False
 
 def parse_time_minutes(t_str):
@@ -143,7 +132,6 @@ def index():
         current_minutes = now_ist.hour * 60 + now_ist.minute
         
         for b in all_buses:
-            # क्रमानुसार सर्व थांबे गोळा करणे
             stops = [b.source]
             if b.source_en:
                 stops.append(b.source_en)
@@ -168,6 +156,9 @@ def index():
             # जर दोन्ही थांबे सापडले आणि योग्य दिशेत (From आधी, To नंतर) असतील
             if src_idx != -1 and dst_idx != -1 and src_idx < dst_idx:
                 bus_minutes = parse_time_minutes(b.departure_time)
+
+                # युझर मूळ स्थानकावरून शोधतोय की मधल्या थांब्यावरून?
+                is_intermediate = not stop_matches(src, b.source)
 
                 if chosen_date == today_date:
                     diff = bus_minutes - current_minutes
@@ -196,7 +187,9 @@ def index():
                     'diff': diff,
                     'is_upcoming': is_upcoming,
                     'status_type': status_type,
-                    'trip_date_label': trip_date_label
+                    'trip_date_label': trip_date_label,
+                    'is_intermediate': is_intermediate,
+                    'user_from': src
                 })
         
         # शोधलेल्या वेळेनंतरच्या आगामी बसेस आधी दाखवणे
