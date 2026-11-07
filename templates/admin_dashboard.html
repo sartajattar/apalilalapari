@@ -19,11 +19,11 @@
                 <div class="row g-2 mb-2">
                     <div class="col-6">
                         <label class="form-label small fw-bold">कुठे (मराठी)</label>
-                        <input type="text" name="destination" placeholder="उदा. कोल्हापूर" class="form-control" required>
+                        <input type="text" name="destination" placeholder="उदा. पुणे" class="form-control" required>
                     </div>
                     <div class="col-6">
                         <label class="form-label small fw-bold">To (English)</label>
-                        <input type="text" name="destination_en" placeholder="उदा. Kolhapur" class="form-control">
+                        <input type="text" name="destination_en" placeholder="उदा. Pune" class="form-control">
                     </div>
                 </div>
 
@@ -31,6 +31,7 @@
                     <label class="form-label small fw-bold">गाडीचा प्रकार</label>
                     <select name="bus_type" class="form-select">
                         <option value="साधी (लालपरी)">साधी (लालपरी)</option>
+                        <option value="इ-शिवाई (Electric Shivai)">इ-शिवाई (Electric Shivai)</option>
                         <option value="निमआराम (एशियाड)">निमआराम (एशियाड)</option>
                         <option value="शिवशाही">शिवशाही</option>
                         <option value="विठाई">विठाई</option>
@@ -40,22 +41,22 @@
                 <div class="row g-2 mb-2">
                     <div class="col-6">
                         <label class="form-label small fw-bold">सुटण्याची वेळ (24-hr)</label>
-                        <input type="text" name="departure_time" placeholder="उदा. 10:00" class="form-control" required>
+                        <input type="text" name="departure_time" placeholder="उदा. 16:00" class="form-control" required>
                     </div>
                     <div class="col-6">
                         <label class="form-label small fw-bold">पोहोचण्याची वेळ</label>
-                        <input type="text" name="arrival_time" placeholder="उदा. 15:58" class="form-control">
+                        <input type="text" name="arrival_time" placeholder="उदा. 21:00" class="form-control">
                     </div>
                 </div>
 
                 <div class="mb-2">
                     <label class="form-label small fw-bold">मार्गे (Via Route)</label>
-                    <input type="text" name="via_route" placeholder="उदा. मोहोळ, पंढरपूर, सांगोला, मिरज" class="form-control">
+                    <input type="text" name="via_route" placeholder="उदा. मोहोळ, टेंभुर्णी, इंदापूर" class="form-control">
                 </div>
 
                 <div class="mb-3">
                     <label class="form-label small fw-bold">साधारण तिकीट (₹)</label>
-                    <input type="number" name="fare" value="200" class="form-control" required>
+                    <input type="number" name="fare" value="485" class="form-control" required>
                 </div>
 
                 <button type="submit" class="btn btn-danger w-100 fw-bold">वेळापत्रकात सेव्ह करा</button>
@@ -74,24 +75,102 @@
                             <th>वेळ</th>
                             <th>तिकीट</th>
                             <th>प्रकार</th>
-                            <th>क्रिया</th>
+                            <th style="min-width: 120px;">क्रिया</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for b in buses %}
                         <tr>
                             <td>
-                                <strong>{{ b.source }} ({{ b.source_en }})</strong> ➔ <strong>{{ b.destination }} ({{ b.destination_en }})</strong><br>
-                                <span class="text-muted">मार्गे: {{ b.via_route }}</span>
+                                <strong>{{ b.source }}</strong> ➔ <strong>{{ b.destination }}</strong><br>
+                                <span class="text-muted">{{ b.via_route }}</span>
                             </td>
                             <td>
                                 <span class="fw-bold text-dark">{{ b.departure_time }}</span>
                                 {% if b.arrival_time %}<br><small class="text-muted">पोहोच: {{ b.arrival_time }}</small>{% endif %}
                             </td>
                             <td>₹{{ b.fare }}</td>
-                            <td><span class="badge bg-secondary">{{ b.bus_type }}</span></td>
                             <td>
-                                <a href="{{ url_for('delete_bus', bus_id=b.id) }}" class="btn btn-sm btn-outline-danger" onclick="return confirm('नक्की हटवायचे आहे का?')">हटवा</a>
+                                {% if 'इ-शिवाई' in b.bus_type %}
+                                    <span class="badge bg-success">{{ b.bus_type }}</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ b.bus_type }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="d-flex gap-1">
+                                    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editModal{{ b.id }}">बदला</button>
+                                    <a href="{{ url_for('delete_bus', bus_id=b.id) }}" class="btn btn-sm btn-outline-danger" onclick="return confirm('नक्की हटवायचे आहे का?')">हटवा</a>
+                                </div>
+
+                                <!-- Edit Popup Modal -->
+                                <div class="modal fade" id="editModal{{ b.id }}" tabindex="-1" aria-hidden="true">
+                                    <div class="modal-dialog">
+                                        <div class="modal-content">
+                                            <div class="modal-header">
+                                                <h5 class="modal-title fw-bold">बस वेळापत्रक अपडेट करा</h5>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <form method="POST" action="{{ url_for('edit_bus', bus_id=b.id) }}">
+                                                <div class="modal-body text-start">
+                                                    <div class="row g-2 mb-2">
+                                                        <div class="col-6">
+                                                            <label class="form-label small fw-bold">कुठून (मराठी)</label>
+                                                            <input type="text" name="source" value="{{ b.source }}" class="form-control" required>
+                                                        </div>
+                                                        <div class="col-6">
+                                                            <label class="form-label small fw-bold">From (English)</label>
+                                                            <input type="text" name="source_en" value="{{ b.source_en or '' }}" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="row g-2 mb-2">
+                                                        <div class="col-6">
+                                                            <label class="form-label small fw-bold">कुठे (मराठी)</label>
+                                                            <input type="text" name="destination" value="{{ b.destination }}" class="form-control" required>
+                                                        </div>
+                                                        <div class="col-6">
+                                                            <label class="form-label small fw-bold">To (English)</label>
+                                                            <input type="text" name="destination_en" value="{{ b.destination_en or '' }}" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="mb-2">
+                                                        <label class="form-label small fw-bold">प्रकार</label>
+                                                        <select name="bus_type" class="form-select">
+                                                            <option value="साधी (लालपरी)" {% if b.bus_type == 'साधी (लालपरी)' %}selected{% endif %}>साधी (लालपरी)</option>
+                                                            <option value="इ-शिवाई (Electric Shivai)" {% if 'इ-शिवाई' in b.bus_type or 'Electric' in b.bus_type %}selected{% endif %}>इ-शिवाई (Electric Shivai)</option>
+                                                            <option value="निमआराम (एशियाड)" {% if b.bus_type == 'निमआराम (एशियाड)' %}selected{% endif %}>निमआराम (एशियाड)</option>
+                                                            <option value="शिवशाही" {% if b.bus_type == 'शिवशाही' %}selected{% endif %}>शिवशाही</option>
+                                                            <option value="विठाई" {% if b.bus_type == 'विठाई' %}selected{% endif %}>विठाई</option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="row g-2 mb-2">
+                                                        <div class="col-6">
+                                                            <label class="form-label small fw-bold">सुटण्याची वेळ</label>
+                                                            <input type="text" name="departure_time" value="{{ b.departure_time }}" class="form-control" required>
+                                                        </div>
+                                                        <div class="col-6">
+                                                            <label class="form-label small fw-bold">पोहोचण्याची वेळ</label>
+                                                            <input type="text" name="arrival_time" value="{{ b.arrival_time or '' }}" class="form-control">
+                                                        </div>
+                                                    </div>
+                                                    <div class="mb-2">
+                                                        <label class="form-label small fw-bold">मार्गे</label>
+                                                        <input type="text" name="via_route" value="{{ b.via_route }}" class="form-control">
+                                                    </div>
+                                                    <div class="mb-2">
+                                                        <label class="form-label small fw-bold">भाडे (₹)</label>
+                                                        <input type="number" name="fare" value="{{ b.fare }}" class="form-control" required>
+                                                    </div>
+                                                </div>
+                                                <div class="modal-footer">
+                                                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">रद्द करा</button>
+                                                    <button type="submit" class="btn btn-success btn-sm fw-bold">बदल सेव्ह करा</button>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+
                             </td>
                         </tr>
                         {% endfor %}
