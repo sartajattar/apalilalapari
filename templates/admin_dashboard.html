@@ -1,0 +1,104 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row">
+    <div class="col-lg-5 mb-4">
+        <div class="card border-0 shadow-sm rounded-4 p-4">
+            <h4 class="fw-bold text-danger mb-3">➕ नवीन बस वेळापत्रक जोडा</h4>
+            <form method="POST">
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">कुठून (मराठी)</label>
+                        <input type="text" name="source" placeholder="उदा. सोलापूर" class="form-control" required>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">From (English)</label>
+                        <input type="text" name="source_en" placeholder="उदा. Solapur" class="form-control">
+                    </div>
+                </div>
+                
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">कुठे (मराठी)</label>
+                        <input type="text" name="destination" placeholder="उदा. कोल्हापूर" class="form-control" required>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">To (English)</label>
+                        <input type="text" name="destination_en" placeholder="उदा. Kolhapur" class="form-control">
+                    </div>
+                </div>
+
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">गाडीचा प्रकार</label>
+                    <select name="bus_type" class="form-select">
+                        <option value="साधी (लालपरी)">साधी (लालपरी)</option>
+                        <option value="निमआराम (एशियाड)">निमआराम (एशियाड)</option>
+                        <option value="शिवशाही">शिवशाही</option>
+                        <option value="विठाई">विठाई</option>
+                    </select>
+                </div>
+
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">सुटण्याची वेळ (24-hr)</label>
+                        <input type="text" name="departure_time" placeholder="उदा. 10:00" class="form-control" required>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">पोहोचण्याची वेळ</label>
+                        <input type="text" name="arrival_time" placeholder="उदा. 15:58" class="form-control">
+                    </div>
+                </div>
+
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">मार्गे (Via Route)</label>
+                    <input type="text" name="via_route" placeholder="उदा. मोहोळ, पंढरपूर, सांगोला, मिरज" class="form-control">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">साधारण तिकीट (₹)</label>
+                    <input type="number" name="fare" value="200" class="form-control" required>
+                </div>
+
+                <button type="submit" class="btn btn-danger w-100 fw-bold">वेळापत्रकात सेव्ह करा</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="card border-0 shadow-sm rounded-4 p-4">
+            <h5 class="fw-bold mb-3">उपलब्ध वेळापत्रक डेटा (एकूण: {{ buses|length }})</h5>
+            <div class="table-responsive" style="max-height: 520px; overflow-y: auto;">
+                <table class="table table-hover align-middle small">
+                    <thead class="table-light">
+                        <tr>
+                            <th>मार्ग</th>
+                            <th>वेळ</th>
+                            <th>तिकीट</th>
+                            <th>प्रकार</th>
+                            <th>क्रिया</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for b in buses %}
+                        <tr>
+                            <td>
+                                <strong>{{ b.source }} ({{ b.source_en }})</strong> ➔ <strong>{{ b.destination }} ({{ b.destination_en }})</strong><br>
+                                <span class="text-muted">मार्गे: {{ b.via_route }}</span>
+                            </td>
+                            <td>
+                                <span class="fw-bold text-dark">{{ b.departure_time }}</span>
+                                {% if b.arrival_time %}<br><small class="text-muted">पोहोच: {{ b.arrival_time }}</small>{% endif %}
+                            </td>
+                            <td>₹{{ b.fare }}</td>
+                            <td><span class="badge bg-secondary">{{ b.bus_type }}</span></td>
+                            <td>
+                                <a href="{{ url_for('delete_bus', bus_id=b.id) }}" class="btn btn-sm btn-outline-danger" onclick="return confirm('नक्की हटवायचे आहे का?')">हटवा</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

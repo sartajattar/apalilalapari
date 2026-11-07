@@ -1,0 +1,14 @@
+body {
+    background-color: #f7f9fb;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.next-bus-highlight {
+    background-color: #f0fff4 !important;
+    border-left: 6px solid #28a745 !important;
+}
+.bus-card {
+    transition: transform 0.2s ease;
+}
+.bus-card:hover {
+    transform: translateY(-2px);
+}

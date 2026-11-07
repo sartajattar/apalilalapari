@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-5">
+        <div class="card p-4 shadow-sm border-0 rounded-4">
+            <h4 class="fw-bold text-center mb-3">नागरिक नोंदणी</h4>
+            <form method="POST">
+                <div class="mb-3">
+                    <label class="form-label">पूर्ण नाव</label>
+                    <input type="text" name="full_name" class="form-control" required placeholder="उदा. अमोल पाटील">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">मोबाईल नंबर किंवा ईमेल</label>
+                    <input type="text" name="identifier" class="form-control" required placeholder="९८XXXXXXXX किंवा ईमेल">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">पासवर्ड सेट करा</label>
+                    <input type="password" name="password" class="form-control" required>
+                </div>
+                <button type="submit" class="btn btn-success w-100 fw-bold">नोंदणी पूर्ण करा</button>
+            </form>
+            <p class="text-center mt-3 small">आधीच खाते आहे? <a href="{{ url_for('login') }}">लॉगिन करा</a></p>
+        </div>
+    </div>
+</div>
+{% endblock %}

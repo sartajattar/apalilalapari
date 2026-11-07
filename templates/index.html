@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card shadow-sm border-0 rounded-4 p-4 mb-4 bg-white">
+            <h4 class="text-danger fw-bold text-center mb-3">📍 तुमची लालपरी शोधा</h4>
+            <p class="text-center text-muted small mb-4">सध्याची वेळ: <strong class="text-dark">{{ current_time }}</strong></p>
+            
+            <form method="GET" action="{{ url_for('index') }}" class="row g-3">
+                <div class="col-md-5">
+                    <label class="form-label fw-bold">कुठून (From)</label>
+                    <input type="text" name="from" value="{{ src }}" list="src-list" class="form-control form-control-lg" placeholder="उदा. Mohol / मोहोळ" required>
+                    <datalist id="src-list">
+                        {% for s in sources %}<option value="{{ s }}">{% endfor %}
+                    </datalist>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label fw-bold">कुठे (To)</label>
+                    <input type="text" name="to" value="{{ dst }}" list="dst-list" class="form-control form-control-lg" placeholder="उदा. Kolhapur / कोल्हापूर" required>
+                    <datalist id="dst-list">
+                        {% for d in destinations %}<option value="{{ d }}">{% endfor %}
+                    </datalist>
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-danger btn-lg w-100 fw-bold">शोधा</button>
+                </div>
+            </form>
+        </div>
+
+        {% if src and dst %}
+            <h5 class="fw-bold mb-3">{{ src }} ➔ {{ dst }} गाड्यांची यादी:</h5>
+            {% if routes %}
+                {% for item in routes %}
+                <div class="card mb-3 border-0 shadow-sm rounded-3 bus-card {% if item.is_upcoming and item.diff >= 0 and loop.first %}border-start border-success border-5 next-bus-highlight{% endif %}">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <span class="badge bg-danger mb-1">{{ item.bus.bus_type }}</span>
+                                <h3 class="fw-bold text-dark mb-0">{{ item.bus.departure_time }}</h3>
+                                {% if item.bus.arrival_time %}
+                                    <small class="text-muted"><i class="bi bi-clock"></i> पोहोचण्याची वेळ: <strong>{{ item.bus.arrival_time }}</strong></small>
+                                {% endif %}
+                            </div>
+                            <div class="text-end">
+                                {% if item.is_upcoming and item.diff >= 0 %}
+                                    <span class="badge bg-success-subtle text-success fs-6 px-3 py-2 rounded-pill">
+                                        {% if item.diff == 0 %}
+                                            आत्ताच सुटत आहे!
+                                        {% elif item.diff < 60 %}
+                                            पुढील गाडी: {{ item.diff }} मिनिटांत
+                                        {% else %}
+                                            पुढील गाडी: {{ item.diff // 60 }} तास {{ item.diff % 60 }} मि.
+                                        {% endif %}
+                                    </span>
+                                {% else %}
+                                    <span class="badge bg-secondary-subtle text-secondary">निघून गेली</span>
+                                {% endif %}
+                                <div class="mt-2 text-danger fw-bold fs-5">अंदाजे ₹{{ item.bus.fare }}</div>
+                            </div>
+                        </div>
+                        <hr class="my-2">
+                        <div class="small text-muted d-flex justify-content-between">
+                            <span><i class="bi bi-geo-alt"></i> मार्गे: <strong>{{ item.bus.via_route }}</strong></span>
+                            <span>महिला ५०% सवलत: <strong>₹{{ (item.bus.fare * 0.5)|round|int }}</strong></span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="alert alert-info text-center py-4">
+                    या मार्गासाठी सध्या वेळापत्रक उपलब्ध नाही. ॲडमिन पॅनेलमधून नवीन वेळापत्रक ॲड केले जात आहे!
+                </div>
+            {% endif %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
