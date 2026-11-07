@@ -12,12 +12,10 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'AttarLalpari2026Key')
 
 # Render PostgreSQL ड्रायव्हर फिक्स (Python 3.14 आणि स्टेबल व्हर्जन सुसंगतता)
+# Render PostgreSQL URL Fix
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///lalpari.db')
-if db_url:
-    if db_url.startswith("postgres://"):
-        db_url = db_url.replace("postgres://", "postgresql+pg8000://", 1)
-    elif db_url.startswith("postgresql://") and "+pg8000" not in db_url and "+psycopg2" not in db_url:
-        db_url = db_url.replace("postgresql://", "postgresql+pg8000://", 1)
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
