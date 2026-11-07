@@ -9,7 +9,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'AttarLalpari2026Key')
 
-# Render PostgreSQL URL Fix
+# Render PostgreSQL URL Fix (psycopg सह)
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///lalpari.db')
 if db_url:
     if db_url.startswith("postgres://"):
@@ -51,6 +51,31 @@ class BusSchedule(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
+# मराठी आणि इंग्रजी नावांचे समानार्थी शब्दकोश (Synonyms Mapping)
+STOP_MAP = {
+    "solapur": "सोलापूर", "सोलापूर": "solapur",
+    "pune": "पुणे", "पुणे": "pune", "swargate": "स्वारगेट", "स्वारगेट": "swargate",
+    "mohol": "मोहोळ", "मोहोळ": "mohol",
+    "tembhurni": "टेंभुर्णी", "टेंभुर्णी": "tembhurni",
+    "indapur": "इंदापूर", "इंदापूर": "indapur",
+    "bhigwan": "भिगवण", "भिगवण": "bhigwan",
+    "hadapsar": "हडपसर", "हडपसर": "hadapsar",
+    "uruli": "उरुळी", "उरुळी": "uruli", "uruli kanchan": "उरुळी कांचन",
+    "barshi": "बार्शी", "बार्शी": "barshi",
+    "kurduwadi": "कुर्डूवाडी", "कुर्डूवाडी": "kurduwadi",
+    "pandharpur": "पंढरपूर", "पंढरपूर": "pandharpur",
+    "sangola": "सांगोला", "सांगोला": "sangola",
+    "miraj": "मिरज", "मिरज": "miraj",
+    "sangli": "सांगली", "सांगली": "sangli",
+    "kolhapur": "कोल्हापूर", "कोल्हापूर": "kolhapur",
+    "ratnagiri": "रत्नागिरी", "रत्नागिरी": "ratnagiri",
+    "akkalkot": "अक्कलकोट", "अक्कलकोट": "akkalkot",
+    "malwandi": "मळवंडी", "मळवंडी": "malwandi",
+    "manegaon": "मानेगाव", "मानेगाव": "manegaon",
+    "narkhed": "नरखेड", "नरखेड": "narkhed",
+    "korfale": "कोरफळे", "कोरफळे": "korfale"
+}
+
 def clean_text(text):
     if not text:
         return ""
@@ -59,10 +84,23 @@ def clean_text(text):
 def stop_matches(user_input, stop_in_db):
     u = clean_text(user_input)
     s = clean_text(stop_in_db)
-    return u in s or s in u
+    
+    # थेट मॅच
+    if u in s or s in u:
+        return True
+    
+    # मराठी <-> इंग्रजी शब्दकोशातून शोधणे
+    mapped_u = STOP_MAP.get(u, "")
+    if mapped_u and (mapped_u in s or s in mapped_u):
+        return True
+        
+    mapped_s = STOP_MAP.get(s, "")
+    if mapped_s and (u in mapped_s or mapped_s in u):
+        return True
+        
+    return False
 
 def parse_time_minutes(t_str):
-    """वेळेचे मिनिटांमध्ये रूपांतर करणे (24-hr आणि 12-hr दोन्ही सुसंगत)"""
     t_str = t_str.strip().upper()
     try:
         if 'PM' in t_str or 'AM' in t_str:
@@ -105,7 +143,7 @@ def index():
         current_minutes = now_ist.hour * 60 + now_ist.minute
         
         for b in all_buses:
-            # थांब्यांची संपूर्ण यादी: Source + Via + Destination
+            # क्रमानुसार सर्व थांबे गोळा करणे
             stops = [b.source]
             if b.source_en:
                 stops.append(b.source_en)
@@ -127,7 +165,7 @@ def index():
                 if dst_idx == -1 and stop_matches(dst, stop):
                     dst_idx = idx
 
-            # जर चढण्याचे ठिकाण आधी आणि उतरण्याचे नंतर असेल
+            # जर दोन्ही थांबे सापडले आणि योग्य दिशेत (From आधी, To नंतर) असतील
             if src_idx != -1 and dst_idx != -1 and src_idx < dst_idx:
                 bus_minutes = parse_time_minutes(b.departure_time)
 
@@ -161,7 +199,7 @@ def index():
                     'trip_date_label': trip_date_label
                 })
         
-        # शोधलेल्या वेळेनंतरच्या आगामी गाड्या आधी दाखवणे
+        # शोधलेल्या वेळेनंतरच्या आगामी बसेस आधी दाखवणे
         routes.sort(key=lambda x: (not x['is_upcoming'], parse_time_minutes(x['bus'].departure_time)))
 
     available_stops = set()
@@ -186,7 +224,6 @@ def index():
                            selected_date_str=selected_date_str,
                            travel_date_display=travel_date_display)
 
-# मूळ नागरिक लॉगिन (मोबाईल / युझरनेम)
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -297,7 +334,6 @@ def logout():
     flash('लॉगआउट झाले.', 'info')
     return redirect(url_for('index'))
 
-# --- डेटाबेस इनिशिएलायझेशन ---
 with app.app_context():
     db.create_all()
     admin = User.query.filter_by(identifier="apalilalpari").first()
