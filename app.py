@@ -9,7 +9,7 @@ from sqlalchemy import or_
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'AttarLalpari2026Key')
 
-# Render PostgreSQL फिक्स
+# Render PostgreSQL ड्रायव्हर फिक्स
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///lalpari.db')
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -20,7 +20,7 @@ db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# भारतीय प्रमाणवेळ (IST: UTC + 5:30)
+# भारतीय प्रमाणवेळ (Indian Standard Time: UTC + 5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # --- मॉडेल्स ---
@@ -47,23 +47,29 @@ class BusSchedule(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-def calculate_next_bus_meta(dep_time_str):
-    now = datetime.now(IST)
-    try:
-        dep_hour, dep_min = map(int, dep_time_str.split(':'))
-        bus_minutes = dep_hour * 60 + dep_min
-        current_minutes = now.hour * 60 + now.minute
-        diff = bus_minutes - current_minutes
-        return diff
-    except Exception:
-        return -9999
-
 # --- राऊट्स ---
 @app.route('/')
 def index():
     src = request.args.get('from', '').strip()
     dst = request.args.get('to', '').strip()
+    req_date = request.args.get('date', '').strip()
     
+    now_ist = datetime.now(IST)
+    today_date = now_ist.date()
+    
+    # युझरने कॅलेंडरमधून निवडलेली तारीख (किंवा आजची तारीख)
+    if req_date:
+        try:
+            chosen_date = datetime.strptime(req_date, "%Y-%m-%d").date()
+        except Exception:
+            chosen_date = today_date
+    else:
+        chosen_date = today_date
+
+    selected_date_str = chosen_date.strftime("%Y-%m-%d")
+    travel_date_display = chosen_date.strftime("%d-%m-%Y")
+    today_str = today_date.strftime("%d-%m-%Y")
+
     routes = []
     if src and dst:
         query = BusSchedule.query.filter(
@@ -77,14 +83,47 @@ def index():
             )
         ).all()
         
+        current_minutes = now_ist.hour * 60 + now_ist.minute
+        
         for b in query:
-            diff = calculate_next_bus_meta(b.departure_time)
+            try:
+                dep_hour, dep_min = map(int, b.departure_time.split(':'))
+                bus_minutes = dep_hour * 60 + dep_min
+            except Exception:
+                bus_minutes = 0
+
+            # तारीख आजची असेल तर गाडी निघून गेली की बाकी आहे ते पाहणे
+            if chosen_date == today_date:
+                diff = bus_minutes - current_minutes
+                if diff >= 0:
+                    status_type = "today"
+                    is_upcoming = True
+                    trip_date_label = f"आज ({chosen_date.strftime('%d %b')})"
+                else:
+                    status_type = "passed_today"
+                    is_upcoming = False
+                    tomorrow = today_date + timedelta(days=1)
+                    trip_date_label = f"उद्या ({tomorrow.strftime('%d %b')})"
+            elif chosen_date > today_date:
+                diff = 9999
+                status_type = "future"
+                is_upcoming = True
+                trip_date_label = chosen_date.strftime('%d %b %Y')
+            else:
+                diff = -9999
+                status_type = "past"
+                is_upcoming = False
+                trip_date_label = chosen_date.strftime('%d %b %Y')
+
             routes.append({
                 'bus': b,
                 'diff': diff,
-                'is_upcoming': diff >= 0
+                'is_upcoming': is_upcoming,
+                'status_type': status_type,
+                'trip_date_label': trip_date_label
             })
         
+        # आगामी गाड्या आधी आणि निघून गेलेल्या खाली
         routes.sort(key=lambda x: (not x['is_upcoming'], x['bus'].departure_time))
 
     sources = set()
@@ -95,11 +134,15 @@ def index():
         if row.destination: destinations.add(row.destination)
         if row.destination_en: destinations.add(row.destination_en)
         
-    current_time_str = datetime.now(IST).strftime("%I:%M %p")
+    current_time_str = now_ist.strftime("%I:%M %p")
     return render_template('index.html', routes=routes, 
                            sources=sorted(list(sources)), 
                            destinations=sorted(list(destinations)), 
-                           src=src, dst=dst, current_time=current_time_str)
+                           src=src, dst=dst, 
+                           current_time=current_time_str,
+                           today_str=today_str,
+                           selected_date_str=selected_date_str,
+                           travel_date_display=travel_date_display)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -215,7 +258,7 @@ def logout():
 with app.app_context():
     db.create_all()
     
-    # ॲडमिन क्रेडेंशियल्स
+    # ॲडमिन
     admin = User.query.filter_by(identifier="apalilalpari").first()
     if not admin:
         admin = User(
@@ -230,9 +273,8 @@ with app.app_context():
     VIA_PUNE = "मोहोळ, टेंभुर्णी, इंदापूर, भिगवण, उरुळी कांचन, हडपसर, स्वारगेट"
     VIA_RATNAGIRI = "मोहोळ, पंढरपूर, सांगोला, शिर्ढोण, मिरज, सांगली, कोल्हापूर मार्गे रत्नागिरी"
 
-    # १. सोलापूर ➔ रत्नागिरी बसेस (नवे स्क्रीनशॉट्स)
+    # १. सोलापूर ➔ रत्नागिरी वेळापत्रक
     ratnagiri_schedules = [
-        # (वेळ, पोहोच, प्रकार, तिकीट, रूट माहिती)
         ("07:20", "17:35", "साधी (लालपरी)", 750, VIA_RATNAGIRI),
         ("08:40", "19:00", "साधी (लालपरी)", 760, VIA_RATNAGIRI),
         ("12:55", "23:30", "साधी (लालपरी)", 840, VIA_RATNAGIRI),
