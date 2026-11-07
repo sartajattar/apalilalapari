@@ -7,11 +7,15 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import or_
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'lalpari-super-secret-key-1948')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'AttarLalpari2026Key')
 
+# Render PostgreSQL ड्रायव्हर फिक्स (psycopg2 सह सुसंगत)
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///lalpari.db')
-if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+elif db_url and db_url.startswith("postgresql://") and not db_url.startswith("postgresql+psycopg2://"):
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -220,7 +224,7 @@ with app.app_context():
         ]
         
         for dep, arr in solapur_kolhapur_times:
-            # सोलापूर ➔ कोल्हापूर (फक्त याचे तिकीट ₹५००)
+            # सोलापूर ➔ कोल्हापूर (भाडे ₹५००)
             b1 = BusSchedule(
                 source="सोलापूर",
                 source_en="Solapur",
@@ -232,7 +236,7 @@ with app.app_context():
                 via_route="मोहोळ, पंढरपूर, सांगोला, मिरज, सांगली",
                 fare=500
             )
-            # मोहोळ ➔ कोल्हापूर (डिफॉल्ट ₹२००, ॲडमिनमधून हवे तेव्हा बदलू शकता)
+            # मोहोळ ➔ कोल्हापूर (डिफॉल्ट भाडे ₹२००, ॲडमिनमधून बदलता येईल)
             b2 = BusSchedule(
                 source="मोहोळ",
                 source_en="Mohol",
@@ -248,7 +252,7 @@ with app.app_context():
             db.session.add(b2)
         db.session.commit()
     else:
-        # आधीपासून असलेल्या डेटाबेसमध्ये फक्त सोलापूर ते कोल्हापूर ₹५०० अपडेट करणे
+        # आधीपासून असलेल्या डेटाबेसमध्ये फक्त सोलापूर ते कोल्हापूर ₹५०० ठेवणे
         solapur_kolhapur_routes = BusSchedule.query.filter(
             or_(BusSchedule.source.ilike("%सोलापूर%"), BusSchedule.source_en.ilike("%Solapur%")),
             or_(BusSchedule.destination.ilike("%कोल्हापूर%"), BusSchedule.destination_en.ilike("%Kolhapur%"))
