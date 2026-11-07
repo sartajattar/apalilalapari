@@ -11,14 +11,18 @@ from flask_mail import Mail, Message
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'AttarLalpari2026Key')
 
-# Render PostgreSQL URL Fix
+# Render PostgreSQL ड्रायव्हर फिक्स (psycopg2 सह)
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///lalpari.db')
-if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+if db_url:
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif db_url.startswith("postgresql://") and "+psycopg2" not in db_url:
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Gmail SMTP Configuration
+# Gmail SMTP कॉन्फिगरेशन
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
@@ -31,7 +35,7 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 mail = Mail(app)
 
-# भारतीय प्रमाणवेळ (IST: UTC + 5:30)[cite: 20]
+# भारतीय प्रमाणवेळ (IST: UTC + 5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # --- मॉडेल्स ---
@@ -51,7 +55,7 @@ class BusSchedule(db.Model):
     bus_type = db.Column(db.String(50), default="साधी (लालपरी)")
     departure_time = db.Column(db.String(10), nullable=False)
     arrival_time = db.Column(db.String(10), nullable=True)
-    via_route = db.Column(db.String(400), default="थेट") # मार्गातील सर्व थांबे इथे येतील
+    via_route = db.Column(db.String(400), default="थेट")
     fare = db.Column(db.Integer, default=200)
 
 @login_manager.user_loader
@@ -61,9 +65,7 @@ def load_user(user_id):
 def clean_text(text):
     if not text:
         return ""
-    # कंसातील मजकूर व अतिरिक्त जागा काढून लोअरकेस करणे
-    cleaned = re.sub(r'\(.*?\)', '', str(text)).strip().lower()
-    return cleaned
+    return re.sub(r'\(.*?\)', '', str(text)).strip().lower()
 
 def stop_matches(user_input, stop_in_db):
     u = clean_text(user_input)
@@ -71,7 +73,7 @@ def stop_matches(user_input, stop_in_db):
     return u in s or s in u
 
 def parse_time_minutes(t_str):
-    """वेळेचे मिनिटांमध्ये रूपांतर करणे (24-hr व 12-hr दोन्ही समजते)"""
+    """वेळेचे मिनिटांमध्ये रूपांतर करणे (24-hr आणि 12-hr दोन्ही समजते)"""
     t_str = t_str.strip().upper()
     try:
         if 'PM' in t_str or 'AM' in t_str:
@@ -80,7 +82,6 @@ def parse_time_minutes(t_str):
         parts = t_str.split(':')
         h = int(parts[0])
         m = int(parts[1])
-        # जर कोणी चुकून 5:45 टाकले असेल आणि ती साधी बस दुपारची असेल तर 17:45 मानणे
         if h in [1, 2, 3, 4, 5, 6, 7] and h != 0:
             h += 12
         return h * 60 + m
@@ -115,7 +116,6 @@ def index():
         current_minutes = now_ist.hour * 60 + now_ist.minute
         
         for b in all_buses:
-            # पूर्ण मार्गातील थांब्यांचा क्रम तयार करणे
             stops = [b.source]
             if b.source_en:
                 stops.append(b.source_en)
@@ -128,7 +128,6 @@ def index():
             if b.destination_en:
                 stops.append(b.destination_en)
 
-            # चढण्याचे व उतरण्याचे ठिकाण शोधणे
             src_idx = -1
             dst_idx = -1
 
@@ -138,13 +137,11 @@ def index():
                 if dst_idx == -1 and stop_matches(dst, stop):
                     dst_idx = idx
 
-            # जर दोन्ही थांबे सापडले आणि योग्य दिशेत असतील (From आधी, To नंतर)
             if src_idx != -1 and dst_idx != -1 and src_idx < dst_idx:
                 bus_minutes = parse_time_minutes(b.departure_time)
 
                 if chosen_date == today_date:
                     diff = bus_minutes - current_minutes
-                    # सर्च वेळेनंतरची गाडी आहे का?
                     if diff >= 0:
                         status_type = "today"
                         is_upcoming = True
@@ -173,10 +170,9 @@ def index():
                     'trip_date_label': trip_date_label
                 })
         
-        # आगामी गाड्या सर्वात वर आणि वेळेनुसार क्रमाने (Ascending)
+        # चालू वेळेनंतरच्या आगामी गाड्या वर आणि क्रमाने
         routes.sort(key=lambda x: (not x['is_upcoming'], parse_time_minutes(x['bus'].departure_time)))
 
-    # ड्रॉपडाउन सुचवण्यासाठी थांब्यांची यादी
     available_stops = set()
     for row in BusSchedule.query.all():
         if row.source: available_stops.add(row.source)
@@ -226,13 +222,15 @@ def login():
                     <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #198754; background: #e8f5e9; padding: 10px 20px; border-radius: 8px;">{otp}</span>
                 </div>
                 <p style="color: #666; font-size: 13px;">हा कोड १० मिनिटांसाठी वैध आहे.</p>
+                <hr style="border: none; border-top: 1px solid #eee;">
+                <small style="color: #999;">महाराष्ट्राची जीवनवाहिनी – अविरत जनसेवा</small>
             </div>
             """
             mail.send(msg)
             flash(f'{email} या ईमेलवर OTP पाठवला आहे!', 'info')
             return redirect(url_for('verify_otp'))
         except Exception:
-            flash('ईमेल पाठवताना अडचण आली. पुन्हा प्रयत्न करा.', 'danger')
+            flash('ईमेल पाठवताना अडचण आली. कृपया पुन्हा प्रयत्न करा.', 'danger')
             return redirect(url_for('login'))
 
     return render_template('login.html')
@@ -261,7 +259,7 @@ def verify_otp():
 
             login_user(user)
             session.pop('otp', None)
-            flash(f'स्वागत आहे, {user.full_name}! लॉगिन झाले.', 'success')
+            flash(f'स्वागत आहे, {user.full_name}! लॉगिन यशस्वी झाले.', 'success')
             return redirect(url_for('index'))
         else:
             flash('चुकीचा OTP टाकला आहे!', 'danger')
@@ -285,7 +283,7 @@ def admin_login():
 @login_required
 def admin_dashboard():
     if not current_user.is_admin:
-        flash('परवानगी नाही!', 'danger')
+        flash('तुम्हाला परवानगी नाही!', 'danger')
         return redirect(url_for('index'))
         
     if request.method == 'POST':
@@ -345,6 +343,7 @@ def logout():
     flash('लॉगआउट झाले.', 'info')
     return redirect(url_for('index'))
 
+# --- डेटाबेस इनिशिएलायझेशन ---
 with app.app_context():
     db.create_all()
     admin = User.query.filter_by(identifier="apalilalpari").first()
