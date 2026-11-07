@@ -1,17 +1,14 @@
 import os
 import re
-import random
 from datetime import datetime, timezone, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_mail import Mail, Message
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'AttarLalpari2026Key')
 
-# Render PostgreSQL ड्रायव्हर फिक्स (Python 3.14 आणि स्टेबल व्हर्जन सुसंगतता)
 # Render PostgreSQL URL Fix
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///lalpari.db')
 if db_url and db_url.startswith("postgres://"):
@@ -20,18 +17,9 @@ if db_url and db_url.startswith("postgres://"):
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Gmail SMTP कॉन्फिगरेशन
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', 'apalilalpari@gmail.com')
-app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', '')
-app.config['MAIL_DEFAULT_SENDER'] = ('आपली लालपरी', app.config['MAIL_USERNAME'])
-
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
-mail = Mail(app)
 
 # भारतीय प्रमाणवेळ (IST: UTC + 5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -114,6 +102,7 @@ def index():
         current_minutes = now_ist.hour * 60 + now_ist.minute
         
         for b in all_buses:
+            # थांब्यांची संपूर्ण यादी: Source + Via + Destination
             stops = [b.source]
             if b.source_en:
                 stops.append(b.source_en)
@@ -135,6 +124,7 @@ def index():
                 if dst_idx == -1 and stop_matches(dst, stop):
                     dst_idx = idx
 
+            # जर चढण्याचे ठिकाण आधी आणि उतरण्याचे नंतर असेल
             if src_idx != -1 and dst_idx != -1 and src_idx < dst_idx:
                 bus_minutes = parse_time_minutes(b.departure_time)
 
@@ -168,7 +158,7 @@ def index():
                     'trip_date_label': trip_date_label
                 })
         
-        # शोधलेल्या वेळेनंतरच्या आगामी बसेस आधी दाखवणे
+        # शोधलेल्या वेळेनंतरच्या आगामी गाड्या आधी दाखवणे
         routes.sort(key=lambda x: (not x['is_upcoming'], parse_time_minutes(x['bus'].departure_time)))
 
     available_stops = set()
@@ -193,81 +183,44 @@ def index():
                            selected_date_str=selected_date_str,
                            travel_date_display=travel_date_display)
 
-# नागरिक लॉगिन (ईमेल OTP)
+# मूळ नागरिक लॉगिन (मोबाईल / युझरनेम)
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        email = request.form.get('identifier', '').strip().lower()
-        if not email or '@' not in email:
-            flash('कृपया वैध ईमेल आयडी प्रविष्ट करा!', 'warning')
-            return redirect(url_for('login'))
+        identifier = request.form.get('identifier', '').strip()
+        password = request.form.get('password')
+        user = User.query.filter_by(identifier=identifier).first()
         
-        otp = str(random.randint(100000, 999999))
-        session['otp'] = otp
-        session['user_email'] = email
-
-        try:
-            msg = Message(
-                subject="आपली लालपरी - लॉगिन OTP",
-                recipients=[email]
-            )
-            msg.html = f"""
-            <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; border-radius: 10px; max-width: 450px;">
-                <h2 style="color: #dc3545; text-align: center;">🚌 आपली लालपरी</h2>
-                <p>नमस्कार,</p>
-                <p>लॉगिन करण्यासाठी तुमचा OTP खालीलप्रमाणे आहे:</p>
-                <div style="text-align: center; margin: 25px 0;">
-                    <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #198754; background: #e8f5e9; padding: 10px 20px; border-radius: 8px;">{otp}</span>
-                </div>
-                <p style="color: #666; font-size: 13px;">हा कोड १० मिनिटांसाठी वैध आहे.</p>
-                <hr style="border: none; border-top: 1px solid #eee;">
-                <small style="color: #999;">महाराष्ट्राची जीवनवाहिनी – अविरत जनसेवा</small>
-            </div>
-            """
-            mail.send(msg)
-            flash(f'{email} या ईमेलवर OTP पाठवला आहे!', 'info')
-            return redirect(url_for('verify_otp'))
-        except Exception:
-            flash('ईमेल पाठवताना अडचण आली. कृपया पुन्हा प्रयत्न करा.', 'danger')
-            return redirect(url_for('login'))
-
+        if user and check_password_hash(user.password, password):
+            login_user(user)
+            flash('यशस्वीरीत्या लॉगिन झाले!', 'success')
+            return redirect(url_for('index'))
+        flash('मोबाईल क्रमांक किंवा पासवर्ड चुकीचा आहे!', 'danger')
     return render_template('login.html')
 
-@app.route('/verify-otp', methods=['GET', 'POST'])
-def verify_otp():
-    email = session.get('user_email')
-    if not email:
-        return redirect(url_for('login'))
-
+@app.route('/register', methods=['GET', 'POST'])
+def register():
     if request.method == 'POST':
-        entered_otp = request.form.get('otp', '').strip()
-        actual_otp = session.get('otp')
-
-        if actual_otp and entered_otp == actual_otp:
-            user = User.query.filter_by(identifier=email).first()
-            if not user:
-                username_part = email.split('@')[0].capitalize()
-                user = User(
-                    identifier=email,
-                    full_name=username_part,
-                    password=generate_password_hash("OTP_VERIFIED", method='scrypt')
-                )
-                db.session.add(user)
-                db.session.commit()
-
-            login_user(user)
-            session.pop('otp', None)
-            flash(f'स्वागत आहे, {user.full_name}! लॉगिन यशस्वी झाले.', 'success')
-            return redirect(url_for('index'))
-        else:
-            flash('चुकीचा OTP टाकला आहे!', 'danger')
-
-    return render_template('verify_otp.html', email=email)
+        identifier = request.form.get('identifier', '').strip()
+        full_name = request.form.get('full_name', '').strip()
+        password = request.form.get('password')
+        
+        if User.query.filter_by(identifier=identifier).first():
+            flash('हा क्रमांक आधीच नोंदणीकृत आहे!', 'warning')
+            return redirect(url_for('register'))
+            
+        hashed_pwd = generate_password_hash(password, method='scrypt')
+        new_user = User(identifier=identifier, full_name=full_name, password=hashed_pwd)
+        db.session.add(new_user)
+        db.session.commit()
+        flash('नोंदणी यशस्वी झाली! आता लॉगिन करा.', 'success')
+        return redirect(url_for('login'))
+    return render_template('register.html')
 
 @app.route('/admin-login', methods=['GET', 'POST'])
 def admin_login():
     if request.method == 'POST':
-        identifier = request.form.get('identifier').strip()
+        identifier = request.form.get('identifier', '').strip()
         password = request.form.get('password')
         user = User.query.filter_by(identifier=identifier, is_admin=True).first()
         
